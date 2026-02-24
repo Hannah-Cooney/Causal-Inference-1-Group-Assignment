@@ -1,0 +1,31 @@
+---
+title: "Untitled"
+output: html_document
+date: "2026-02-10"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(dplyr)
+```
+
+```{r}
+# Load the data
+load("obesity.Rda")
+
+obesity <- obesity |>
+  mutate(diabetes = ifelse(diabetes == "No", 0, 1))
+
+as.numeric(obesity$diabetes)
+```
+
+```{r}
+lin_model <- lm(diabetes ~ medhyper*waist + medhyper*sex + medhyper*SYSBP 
+                + medhyper*DIABP +  medhyper*alcohol + medhyper*current.smoking,
+                data = obesity)
+
+summary(lin_model)
+```
