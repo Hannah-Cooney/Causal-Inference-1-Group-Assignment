@@ -27,7 +27,6 @@ summary(obesity)
 
 ```
 
-
 ```{r}
 library(dagitty)
 library(ggplot2)
@@ -67,6 +66,7 @@ g.diabetes <- dagitty('dag {
 ## Plot DAG
 plot(g.diabetes)
 ```
+
 ```{r}
 print(r)
 ```
@@ -82,4 +82,3 @@ par(mar = c(4, 8.5, 1.5, 0.5))
 
 plotLocalTestResults(r, bty = "n", xlim = c(-0.4, 0.4), ylim = c(0.1, 3.1), axis.pars = list(las = 1, lty = 0))
 ```
-
