@@ -148,27 +148,26 @@ Here I'm using the DAG procedure in the book
 ```{r}
 diabetes_dag <- dagify(
   diabetes ~ ARTBP + waist + sex,
-  ARTBP ~ age + medhyper + substance_use,
-  bmi ~ age,
+  ARTBP ~ age + medhyper + substance_use + medication,
+  bmi ~ age + medication,
   waist ~ bmi,
   substance_use ~ social_factors,
-  medication ~ social_factors,
   
   coords = time_ordered_coords(
     list(
       # Time point 1
-      c("social_factors", "substance_use", "medhyper"),
+      c("medhyper", "substance_use", "social_factors"),
       # Time point 2
-      c("diabetes", "ARTBP"),
+      c("diabetes", "ARTBP", "age"),
       # Time point 3
-      c("sex", "waist", "bmi", "age")
+      c("sex", "waist", "bmi", "medication")
     )
   ),
   
   exposure = "medhyper",
   outcome = "diabetes"
 )
-  
+
 # Draw the DAG
 theme_set(
   theme_dag() %+replace%
@@ -178,7 +177,7 @@ theme_set(
     )
 )
 diabetes_dag |>
-  ggdag(text_size = 2)
+  ggdag(node_size = 19, text_size = 2.2)
 ```
 
 ```{r}
