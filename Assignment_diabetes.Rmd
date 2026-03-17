@@ -91,39 +91,37 @@ obesity_na <- obesity |>
 
 The obesity_na dataframe does not contain any NAs. I'm using that one for performing the DAG testing, but later on we need to take into the missingness of the obesity values and some of the covariates
 
-## DAG (1)
-
-Here I'm using the DAG code like in the lecture exercises
+## DAG
 
 ```{r}
 # Specify the DAG
 g.diabetes <- dagitty('dag {
-  social_factors[pos="-1, -2"]
+  social_factors[pos="-2.5, 1"]
   substance_use [pos="-2.5, 3"]
   sex           [pos="1, -2"]
-  medhyper      [pos="0, 3"]
+  medhyper      [exposure,pos="0, 3"]
   bmi           [pos="2, -1"]
   waist         [pos="1, 0"]
   age           [pos="1.5, 1.5"]
   ARTBP         [pos="-0.5, 1"]
-  diabetes      [outcome,pos="-0.5, -0.5"]
+  diabetes      [outcome,pos="-0.5, -1"]
+  medication    [pos="-2, -1"]
 
-  social_factors -> diabetes
+  social_factors -> substance_use
   substance_use -> {ARTBP}
   ARTBP -> diabetes
   sex -> {diabetes bmi}
   medhyper -> {ARTBP}
-  bmi -> waist
-  waist -> diabetes
-  age -> {bmi ARTBP}
+  bmi -> {waist medhyper medication}
+  waist -> {diabetes ARTBP}
+  age -> {bmi ARTBP medhyper medication}
+  medication -> {ARTBP}
   }
 ')
 
 # Plot the DAG
 plot(g.diabetes)
 ```
-
-mean ethereal blood pressure
 
 ```{r}
 # Perform local tests 
@@ -137,63 +135,17 @@ r <- r[p.adjust(r$p.value) < 0.05, ] # Retain only significant results
 plotLocalTestResults(r, bty = "n", 
                      xlim = c(0, 1), ylim = c(0.1, 3.1), 
                      axis.pars = list(las = 1, lty = 0, cex.axis = 0.8))
+
+# Variables to account for 
+adjustmentSets(g.diabetes, effect = "total") 
 ```
 
 type = "cis.pillai" is used as our data consists of both continuous and categorical variables
 
-## DAG (2)
-
-Here I'm using the DAG procedure in the book
-
-```{r}
-diabetes_dag <- dagify(
-  diabetes ~ ARTBP + waist + sex,
-  ARTBP ~ age + medhyper + substance_use + medication,
-  bmi ~ age + medication,
-  waist ~ bmi,
-  substance_use ~ social_factors,
-  
-  coords = time_ordered_coords(
-    list(
-      # Time point 1
-      c("medhyper", "substance_use", "social_factors"),
-      # Time point 2
-      c("diabetes", "ARTBP", "age"),
-      # Time point 3
-      c("sex", "waist", "bmi", "medication")
-    )
-  ),
-  
-  exposure = "medhyper",
-  outcome = "diabetes"
-)
-
-# Draw the DAG
-theme_set(
-  theme_dag() %+replace%
-    theme(
-      legend.position = "bottom",
-      strip.text.x = element_text(margin = margin(2, 0, 2, 0, "mm"))
-    )
-)
-diabetes_dag |>
-  ggdag(node_size = 19, text_size = 2.2)
-```
-
-```{r}
-# Variables we need to account for
-adjustmentSets(diabetes_dag, type = "canonical")
-```
-
 ## G-modeling
 
 ```{r}
-# 
-lin_model <- lm(diabetes ~ medhyper*waist + medhyper*sex + medhyper*SYSBP 
-                + medhyper*DIABP +  medhyper*alcohol + medhyper*current.smoking,
-                data = obesity)
 
-summary(lin_model)
 ```
 
 ## Missing values
