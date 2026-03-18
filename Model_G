@@ -1,0 +1,20 @@
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+install.packages("stdReg")
+load("/Users/claradomning/Downloads/obesity (2).Rda")
+obesity_na <- na.omit(obesity)
+library(stdReg)
+
+#outcome model with interactions -> Y = diabetes, X = medhyper, C = confounders
+model_g <- glm(diabetes ~ medhyper * age + medhyper * sex + medhyper * bmi, family = binomial(link = "logit"), data = obesity_na)
+summary(model_g)
+
+#predictions 
+fit_std <- stdGlm(fit = model_g, data = obesity_na, X = "medhyper")
+
+#estimates with 95% CIs
+summary(fit_std)
+
+# ATE (Risk Difference) and its 95% CI
+summary(fit_std, contrast = "difference", reference = "no")
+```
