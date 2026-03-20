@@ -1,0 +1,20 @@
+
+# Missing Data
+install.packages("mice")
+library(mice)
+str(obesity)
+summary(obesity)
+md.pattern(obesity)
+
+# multiple imputation 
+imp1 <- mice(obesity, m=5)
+# -->Inspect
+imp1
+# -->Explore
+imp1$imp
+
+# original
+hist(obesity$waist)
+
+# imputed dataset
+hist(complete(imp1, 1)$waist)
