@@ -15,6 +15,11 @@ library(ggdag)
 library(ggplot2)
 library(GGally)
 library(gridExtra)
+library(stdReg)
+library(mice)
+library(cobalt)
+library(survey)
+library(MatchIt)
 ```
 
 ## Data preparation
@@ -81,7 +86,7 @@ obesity$substance_use <- as.factor(obesity$alcohol_level + obesity$current.smoki
 # Medication 
 obesity$medication <- as.factor(obesity$medstatin + obesity$medglucose)
 
-# Create the dataframe for the DAG testing
+# Complete-cases only dataframe
 obesity_na <- obesity |>
   select(-c("education", "income", "current.smoking", "alcohol", 
             "medstatin", "medglucose", "SYSBP", "DIABP")) |>
@@ -125,13 +130,14 @@ plot(g.diabetes)
 
 ```{r}
 # Perform local tests 
-r <- localTests(g.diabetes, obesity_na, type = "cis.pillai")
+r <- localTests(g.diabetes, obesity_na, 
+                type = "cis.pillai") 
 
 # Adjusts for multiple testing with Holm-Bonferri correction
 r <- r[p.adjust(r$p.value) < 0.05, ] # Retain only significant results
 
 # Plot the conditional independencies inconsistent with data
-#r <- r[order(r$p.value), ] # Order by significance
+r <- r[order(r$p.value), ] # Order by significance
 plotLocalTestResults(r, bty = "n", 
                      xlim = c(0, 1), ylim = c(0.1, 3.1), 
                      axis.pars = list(las = 1, lty = 0, cex.axis = 0.8))
@@ -145,7 +151,22 @@ type = "cis.pillai" is used as our data consists of both continuous and categori
 ## G-modeling
 
 ```{r}
+# Outcome model with interactions -> Y = diabetes, X = medhyper, C = confounders
+model_g <- glm(diabetes ~ medhyper * age + medhyper * bmi, 
+               family = binomial(link = "logit"), 
+               data = obesity_na)
+summary(model_g)
+```
 
+```{r}
+# Predictions 
+fit_std <- stdGlm(fit = model_g, data = obesity_na, X = "medhyper")
+
+# Estimates with 95% CIs
+summary(fit_std)
+
+# ATE (Risk Difference) and its 95% CI
+summary(fit_std, contrast = "difference", reference = "no")
 ```
 
 ## Missing values
@@ -153,7 +174,101 @@ type = "cis.pillai" is used as our data consists of both continuous and categori
 ```{r}
 # Check the rows which have missing values
 res <- obesity[!complete.cases(obesity),]
-print(res)
+res
+
+# Percentage of observations with missing data 
+(212/10277) * 100
+
+# Amount of missing values per variable
+res %>% summarise(across(everything(), ~ sum(is.na(.))))
+
+sum(obesity$medhyper == "yes")
+sum(obesity$medhyper == "no")
 ```
 
-We see that most of the missing data is on education, then on smoking.status and ...
+## Propensity score
+
+### Reweighting
+
+```{r}
+# Fit propensity model
+ps_fit <- glm(medhyper ~ age + bmi,
+              family = "binomial", data = obesity_na)
+summary(ps_fit)
+
+# Calculate propensity
+obesity_na$ps <- fitted.values(ps_fit)
+summary(obesity_na$ps)
+
+# Generate corresponding weights
+obesity_na$ipw <- (obesity_na$medhyper == "yes")/obesity_na$ps +
+  (obesity_na$medhyper == "no")/(1 - obesity_na$ps)
+summary(obesity_na$ipw)
+
+# Calculate truncated weights
+ipw.p99 <-quantile(obesity_na$ipw, 0.99) # 99th percentile
+obesity_na$ipw.trunc <- ifelse(obesity_na$ipw > ipw.p99, ipw.p99, obesity_na$ipw)
+summary(obesity_na$ipw.trunc)
+```
+
+```{r}
+# Define new dataframe to assess balance
+vars <- c("age", "bmi")
+covariates <- obesity_na[, vars] 
+
+# Standardised differences between treated and untreated patients
+bal.tab(covariates, treat = obesity_na$medhyper, weights = obesity_na$ipw.trunc, 
+        method = "weighting", un = TRUE)
+
+# Love plot
+love.plot(covariates, treat = obesity_na$medhyper, weights = obesity_na$ipw.trunc,
+          method = "weighting", binary = "std", threshold = 0.1)
+
+# Histogram
+par(mfrow=c(2,1))
+hist(obesity_na$ps[obesity_na$medhyper == "yes"], xlim = c(0, 1),
+     main = "Medhyper", xlab = "Propensity Score")
+hist(obesity_na$ps[obesity_na$medhyper == "no"], xlim = c(0, 1),
+     main = "No Medhyper", xlab = "Propensity Score")
+```
+
+The histograms show considerable overlap
+
+```{r}
+# Calculate ATE (with the truncated weights)
+d.w.trunc <- svydesign(~1, weights = obesity_na$ipw.trunc, data = obesity_na)
+fit.ipw.trunc <- svyglm(diabetes ~ medhyper, design = d.w.trunc)
+summary(fit.ipw.trunc)
+
+# Get the CI 
+confint(fit.ipw.trunc)
+```
+
+Estimates ATE with truncated weights: 0.005
+
+CI: [-0.004, 0.014]
+
+### Matching
+
+Out of the 10065 observations, 5742 are matched (2871 treated, and 2871 untreated)
+
+```{r}
+# Match with a caliper
+match.out <- matchit(medhyper ~ age + bmi, data = obesity_na,
+                      method = "nearest", distance = "glm", caliper = 0.1)
+match.out
+summary(match.out)
+
+# Analyse the matches
+match.data <- match.data(match.out)
+table(match.data$medhyper, match.data$diabetes) 
+prop.table(table(match.data$medhyper, match.data$diabetes) , margin=1)
+```
+
+no/yes: medhyper
+
+0/1: diabetes values
+
+4.7% for patients who received medhyper and 4.2% for patients who did not receive medhyper were diagnosed with diabetes
+
+-   A difference of 0.5%
