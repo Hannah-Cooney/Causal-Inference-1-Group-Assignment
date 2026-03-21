@@ -1,5 +1,5 @@
 ---
-title: "Untitled"
+title: "Causal Inference Assignment"
 output: html_document
 date: "2026-02-10"
 ---
@@ -16,10 +16,9 @@ library(ggplot2)
 library(GGally)
 library(gridExtra)
 library(stdReg)
-library(mice)
 library(cobalt)
 library(survey)
-library(MatchIt)
+library(MatchIt) 
 ```
 
 ## Data preparation
@@ -40,8 +39,6 @@ obesity <- obesity |>
   mutate(medglucose = ifelse(medglucose == "no", 0, 1)) |> 
   # Remove columns that are not needed for this research
   select(-c("nr", "CVD", "MI", "angina", "stroke", "death")) 
-
-
 ```
 
 We can combine some of the variables into 1 such as:
@@ -94,7 +91,22 @@ obesity_na <- obesity |>
   na.omit() # Remove rows with NA value in any column
 ```
 
-The obesity_na dataframe does not contain any NAs. I'm using that one for performing the DAG testing, but later on we need to take into the missingness of the obesity values and some of the covariates
+The obesity_na dataframe does not contain any NAs. We're using that one for performing the DAG testing, but later on we need to check the missingness of the obesity values and some of the covariates
+
+## Descriptive Analysis
+
+```{r}
+sum(obesity$diabetes == 1, na.rm = T)
+sum(obesity$diabetes == 0, na.rm = T)
+
+obesity |> 
+  group_by(diabetes) |>
+  summarize(mean_age = mean(age),
+            sex_female = sum(sex == "female") / length(sex) * 100, # %
+            medhyper_yes = sum(medhyper == "yes") / length(medhyper) * 100, # %
+            bmi = mean(bmi),
+            ARTBP = mean(ARTBP, na.rm = T))
+```
 
 ## DAG
 
@@ -180,10 +192,9 @@ res
 (212/10277) * 100
 
 # Amount of missing values per variable
-res %>% summarise(across(everything(), ~ sum(is.na(.))))
-
-sum(obesity$medhyper == "yes")
-sum(obesity$medhyper == "no")
+missing <- res |> summarise(across(everything(), ~ sum(is.na(.)))) 
+missing # Counts
+(missing/10065) * 100 # Percentages
 ```
 
 ## Propensity score
@@ -219,17 +230,40 @@ covariates <- obesity_na[, vars]
 # Standardised differences between treated and untreated patients
 bal.tab(covariates, treat = obesity_na$medhyper, weights = obesity_na$ipw.trunc, 
         method = "weighting", un = TRUE)
+```
 
+```{r}
 # Love plot
-love.plot(covariates, treat = obesity_na$medhyper, weights = obesity_na$ipw.trunc,
-          method = "weighting", binary = "std", threshold = 0.1)
+pdf(file = "Loveplot_medhyper.pdf")
+p1 <- love.plot(covariates, treat = obesity_na$medhyper, 
+               weights = obesity_na$ipw.trunc, method = "weighting", 
+               binary = "std", threshold = 0.1, title = "Covariate Balance")
+p1 + 
+  theme( # Increase text size 
+    legend.key.size = unit(1, "line"),
+    legend.position = "right",
+    legend.text = element_text(size = 12),
+    legend.title = element_text(size = 13),
+    axis.title.x = element_text(size = 12),
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 12),
+    plot.title = element_text(size = 14, face = "bold")) +
+  guides(color = guide_legend(override.aes = list(size = 2.5)))
 
+dev.off()
+```
+
+```{r}
 # Histogram
+pdf(file = "Propensity_medhyper.pdf")
 par(mfrow=c(2,1))
 hist(obesity_na$ps[obesity_na$medhyper == "yes"], xlim = c(0, 1),
      main = "Medhyper", xlab = "Propensity Score")
+
+
 hist(obesity_na$ps[obesity_na$medhyper == "no"], xlim = c(0, 1),
      main = "No Medhyper", xlab = "Propensity Score")
+dev.off()
 ```
 
 The histograms show considerable overlap
