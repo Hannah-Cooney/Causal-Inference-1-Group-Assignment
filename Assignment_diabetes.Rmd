@@ -280,9 +280,7 @@ summary(fit.ipw.trunc)
 confint(fit.ipw.trunc)
 ```
 
-Estimates ATE with truncated weights: 0.005
-
-CI: [-0.004, 0.014]
+Estimates ATE with truncated weights: 0.005. CI: [-0.004, 0.014]
 
 ### Matching
 
@@ -300,11 +298,3 @@ match.data <- match.data(match.out)
 table(match.data$medhyper, match.data$diabetes) 
 prop.table(table(match.data$medhyper, match.data$diabetes) , margin=1)
 ```
-
-no/yes: medhyper
-
-0/1: diabetes values
-
-4.7% for patients who received medhyper and 4.2% for patients who did not receive medhyper were diagnosed with diabetes
-
--   A difference of 0.5%
