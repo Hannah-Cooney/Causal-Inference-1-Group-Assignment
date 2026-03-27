@@ -1,0 +1,309 @@
+---
+title: "Causal Inference Assignment"
+output:
+  word_document: default
+  html_document: default
+date: "2026-02-10"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, message = FALSE}
+library(dplyr)
+library(dagitty)
+library(ggdag)
+library(ggplot2)
+library(GGally)
+library(gridExtra)
+library(stdReg)
+library(cobalt)
+library(survey)
+library(MatchIt) 
+```
+
+## Data preparation
+
+```{r}
+# Load the data
+load("obesity.Rda")
+
+obesity <- obesity |>
+  mutate(diabetes = ifelse(diabetes == "No", 0, 1)) |>
+  mutate(education = ifelse(education == "other", 0, 1)) |>
+  mutate(income = ifelse(income == "low or normal", 0, 1)) |>
+  mutate(current.smoking = ifelse(current.smoking == "no", 0, 2)) |>
+  mutate(alcohol_level = case_when(alcohol == 0 ~ 0,
+                                   alcohol > 0 & alcohol < 4 ~ 1,
+                                 alcohol >= 4 ~ 2)) |>
+  mutate(medstatin = ifelse(medstatin == "no", 0, 1)) |>
+  mutate(medglucose = ifelse(medglucose == "no", 0, 1)) |> 
+  # Remove columns that are not needed for this research
+  select(-c("nr", "CVD", "MI", "angina", "stroke", "death")) 
+```
+
+We can combine some of the variables into 1 such as:
+
+-   Mean arterial blood pressure = DIABP + (SYSBP - DIABP)/3
+-   Social economic factors
+    -   education: other (0), high (1)
+    -   income: low or normal (0), high (1)
+    -   We combine these into one factor
+        -   (0): none of the factors are high
+        -   (1): one of factors are high
+        -   (2): both are high
+-   Substance abuse
+    -   alcohol: it ranges from 0 to 17 (do table(obesity\$alcohol) )
+        -   0: no alcohol (0)
+        -   1-3: occasionally drinker (1)
+        -   4-17: heavy drinker (2)
+    -   current.smoking: no (0), yes (2)
+    -   We combine these into one factor, which is a sum of the alcohol and current.smoking levels
+        -   (0): no smoking, no alcohol
+        -   (1): only occasionally drinking
+        -   (2): smoker or heavy drinker
+        -   (3): smoking and occasionally drinker
+        -   (4): smoking and heavy drinker
+-   Medication:
+    -   Use of medstatin and medglucose
+    -   We combine these into one factor
+        -   (0): none
+        -   (1): one of them is used
+        -   (2): both are used
+
+```{r}
+# Arterial blood pressure
+obesity$ARTBP <- obesity$DIABP + (obesity$SYSBP - obesity$DIABP)/3
+
+# Social economic factors
+obesity$social_factors <- as.factor(obesity$income + obesity$education)
+
+# Substance abuse 
+obesity$substance_use <- as.factor(obesity$alcohol_level + obesity$current.smoking)
+
+# Medication 
+obesity$medication <- as.factor(obesity$medstatin + obesity$medglucose)
+
+# Complete-cases only dataframe
+obesity_na <- obesity |>
+  select(-c("education", "income", "current.smoking", "alcohol", 
+            "medstatin", "medglucose", "SYSBP", "DIABP")) |>
+  filter(diabetes != "NA") |> # We only look at obesity
+  na.omit() # Remove rows with NA value in any column
+```
+
+The obesity_na dataframe does not contain any NAs. We're using that one for performing the DAG testing, but later on we need to check the missingness of the obesity values and some of the covariates
+
+## Descriptive Analysis
+
+```{r}
+sum(obesity$diabetes == 1, na.rm = T)
+sum(obesity$diabetes == 0, na.rm = T)
+
+obesity |> 
+  group_by(diabetes) |>
+  summarize(mean_age = mean(age),
+            sex_female = sum(sex == "female") / length(sex) * 100, # %
+            medhyper_yes = sum(medhyper == "yes") / length(medhyper) * 100, # %
+            bmi = mean(bmi),
+            ARTBP = mean(ARTBP, na.rm = T))
+```
+
+## DAG
+
+```{r}
+# Specify the DAG
+g.diabetes <- dagitty('dag {
+  social_factors[pos="-2, 1"]
+  substance_use [pos="-2, 3"]
+  sex           [pos="0, -2"]
+  medhyper      [exposure,pos="1, 0"]
+  bmi           [pos="2, -2"]
+  waist         [pos="0, -1"]
+  age           [pos="1.5, 1.5"]
+  ARTBP         [pos="0, 1.5"]
+  diabetes      [outcome,pos="-2, -2"]
+  medication    [pos="2, 3"]
+  social_factors -> substance_use
+  substance_use -> {ARTBP}
+  ARTBP -> diabetes
+  sex -> {diabetes bmi}
+  medhyper -> {ARTBP}
+  bmi -> {waist medhyper medication}
+  waist -> {diabetes ARTBP}
+  age -> {bmi ARTBP medhyper medication}
+  medication -> {ARTBP}
+  }
+')
+
+# Plot the DAG
+plot(g.diabetes)
+```
+
+```{r}
+# Perform local tests 
+r <- localTests(g.diabetes, obesity_na, 
+                type = "cis.pillai") 
+
+# Adjusts for multiple testing with Holm-Bonferri correction
+r <- r[p.adjust(r$p.value) < 0.05, ] # Retain only significant results
+
+# Plot the conditional independencies inconsistent with data
+r <- r[order(r$p.value), ] # Order by significance
+plotLocalTestResults(r, bty = "n", 
+                     xlim = c(0, 1), ylim = c(0.1, 3.1), 
+                     axis.pars = list(las = 1, lty = 0, cex.axis = 0.8))
+
+# Variables to account for 
+adjustmentSets(g.diabetes, effect = "total") 
+```
+
+type = "cis.pillai" is used as our data consists of both continuous and categorical variables
+
+## G-modeling
+
+```{r}
+# Outcome model with interactions -> Y = diabetes, X = medhyper, C = confounders
+model_g <- glm(diabetes ~ medhyper * age + medhyper * bmi, 
+               family = binomial(link = "logit"), 
+               data = obesity_na)
+summary(model_g)
+```
+
+```{r}
+# Predictions 
+fit_std <- stdGlm(fit = model_g, data = obesity_na, X = "medhyper")
+
+# Estimates with 95% CIs
+summary(fit_std)
+
+# ATE (Risk Difference) and its 95% CI
+summary(fit_std, contrast = "difference", reference = "no")
+```
+
+## Missing values
+
+```{r}
+# Check the rows which have missing values
+res <- obesity[!complete.cases(obesity),]
+res
+
+# Percentage of observations with missing data 
+(212/10277) * 100
+
+# Amount of missing values per variable
+missing <- res |> summarise(across(everything(), ~ sum(is.na(.)))) 
+missing # Counts
+(missing/10065) * 100 # Percentages
+```
+
+## Propensity score
+
+### Reweighting
+
+```{r}
+# Fit propensity model
+ps_fit <- glm(medhyper ~ age + bmi,
+              family = "binomial", data = obesity_na)
+summary(ps_fit)
+
+# Calculate propensity
+obesity_na$ps <- fitted.values(ps_fit)
+summary(obesity_na$ps)
+
+# Generate corresponding weights
+obesity_na$ipw <- (obesity_na$medhyper == "yes")/obesity_na$ps +
+  (obesity_na$medhyper == "no")/(1 - obesity_na$ps)
+summary(obesity_na$ipw)
+
+# Calculate truncated weights
+ipw.p99 <-quantile(obesity_na$ipw, 0.99) # 99th percentile
+obesity_na$ipw.trunc <- ifelse(obesity_na$ipw > ipw.p99, ipw.p99, obesity_na$ipw)
+summary(obesity_na$ipw.trunc)
+```
+
+```{r}
+# Define new dataframe to assess balance
+vars <- c("age", "bmi")
+covariates <- obesity_na[, vars] 
+
+# Standardised differences between treated and untreated patients
+bal.tab(covariates, treat = obesity_na$medhyper, weights = obesity_na$ipw.trunc, 
+        method = "weighting", un = TRUE)
+```
+
+```{r}
+# Love plot
+pdf(file = "Loveplot_medhyper.pdf")
+p1 <- love.plot(covariates, treat = obesity_na$medhyper, 
+               weights = obesity_na$ipw.trunc, method = "weighting", 
+               binary = "std", threshold = 0.1, title = "Covariate Balance")
+p1 + 
+  theme( # Increase text size 
+    legend.key.size = unit(1, "line"),
+    legend.position = "right",
+    legend.text = element_text(size = 12),
+    legend.title = element_text(size = 13),
+    axis.title.x = element_text(size = 12),
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 12),
+    plot.title = element_text(size = 14, face = "bold")) +
+  guides(color = guide_legend(override.aes = list(size = 2.5)))
+
+dev.off()
+```
+
+```{r}
+# Histogram
+pdf(file = "Propensity_medhyper.pdf")
+par(mfrow=c(2,1))
+hist(obesity_na$ps[obesity_na$medhyper == "yes"], xlim = c(0, 1),
+     main = "Medhyper", xlab = "Propensity Score")
+
+
+hist(obesity_na$ps[obesity_na$medhyper == "no"], xlim = c(0, 1),
+     main = "No Medhyper", xlab = "Propensity Score")
+dev.off()
+```
+
+The histograms show considerable overlap
+
+```{r}
+# Calculate ATE (with the truncated weights)
+d.w.trunc <- svydesign(~1, weights = obesity_na$ipw.trunc, data = obesity_na)
+fit.ipw.trunc <- svyglm(diabetes ~ medhyper, design = d.w.trunc)
+summary(fit.ipw.trunc)
+
+# Get the CI 
+confint(fit.ipw.trunc)
+```
+
+Estimates ATE with truncated weights: 0.005
+
+CI: [-0.004, 0.014]
+
+### Matching
+
+Out of the 10065 observations, 5742 are matched (2871 treated, and 2871 untreated)
+
+```{r}
+# Match with a caliper
+match.out <- matchit(medhyper ~ age + bmi, data = obesity_na,
+                      method = "nearest", distance = "glm", caliper = 0.1)
+match.out
+summary(match.out)
+
+# Analyse the matches
+match.data <- match.data(match.out)
+table(match.data$medhyper, match.data$diabetes) 
+prop.table(table(match.data$medhyper, match.data$diabetes) , margin=1)
+```
+
+no/yes: medhyper
+
+0/1: diabetes values
+
+4.7% for patients who received medhyper and 4.2% for patients who did not receive medhyper were diagnosed with diabetes
+
+-   A difference of 0.5%
