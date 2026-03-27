@@ -11,7 +11,6 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r, message = FALSE}
 library(dplyr)
 library(dagitty)
-library(ggdag)
 library(ggplot2)
 library(GGally)
 library(gridExtra)
@@ -96,9 +95,10 @@ The obesity_na dataframe does not contain any NAs. We're using that one for perf
 ## Descriptive Analysis
 
 ```{r}
-sum(obesity$diabetes == 1, na.rm = T)
-sum(obesity$diabetes == 0, na.rm = T)
+# Diabetes counts in data
+table(obesity$diabetes)
 
+# Average values grouped by diabetes Yes/No
 obesity |> 
   group_by(diabetes) |>
   summarize(mean_age = mean(age),
@@ -106,6 +106,9 @@ obesity |>
             medhyper_yes = sum(medhyper == "yes") / length(medhyper) * 100, # %
             bmi = mean(bmi),
             ARTBP = mean(ARTBP, na.rm = T))
+
+# Medhyper takers 
+sum(obesity$medhyper == "yes")
 ```
 
 ## DAG
@@ -113,17 +116,16 @@ obesity |>
 ```{r}
 # Specify the DAG
 g.diabetes <- dagitty('dag {
-  social_factors[pos="-2.5, 1"]
-  substance_use [pos="-2.5, 3"]
-  sex           [pos="1, -2"]
-  medhyper      [exposure,pos="0, 3"]
-  bmi           [pos="2, -1"]
-  waist         [pos="1, 0"]
+  social_factors[pos="-2, 1"]
+  substance_use [pos="-2, 3"]
+  sex           [pos="0, -2"]
+  medhyper      [exposure,pos="1, 0"]
+  bmi           [pos="2, -2"]
+  waist         [pos="0, -1"]
   age           [pos="1.5, 1.5"]
-  ARTBP         [pos="-0.5, 1"]
-  diabetes      [outcome,pos="-0.5, -1"]
-  medication    [pos="-2, -1"]
-
+  ARTBP         [pos="0, 1.5"]
+  diabetes      [outcome,pos="-2, -2"]
+  medication    [pos="2, 3"]
   social_factors -> substance_use
   substance_use -> {ARTBP}
   ARTBP -> diabetes
